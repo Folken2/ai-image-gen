@@ -9,9 +9,18 @@ import {
   Wand2, 
   FileText, 
   Image as ImageIcon, // Rename to avoid conflict with Next Image 
-  LayoutDashboard 
 } from "lucide-react"; 
 import { Button } from "@/components/ui/button";
+import {
+  TooltipProvider,
+  Tooltip,
+  TooltipTrigger,
+  TooltipContent,
+} from "@/components/ui/tooltip"
+import {
+  Settings,
+  List,
+} from "lucide-react"
 
 // Update navItems with icon components
 const navItems = [

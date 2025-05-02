@@ -13,7 +13,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 // Import definitions from generate page to populate filters
-import { availableProvidersDisplay, availableStyles } from '@/app/generate/page'; // Assuming these are exported from generate/page.tsx
+import { availableProvidersDisplay, availableStyles } from '@/app/generate/constants'; // Corrected import path
 import { ImageRecord } from '@/types/images'; // <-- Import shared type
 
 // Define Generic Providers for Filtering
