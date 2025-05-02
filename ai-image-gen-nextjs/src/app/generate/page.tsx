@@ -580,7 +580,7 @@ export default function Home() {
           </Card>
         </div>
          <footer className="mt-12 text-center text-muted-foreground text-sm">
-           Built with Next.js and shadcn/ui
+           Built by Albert Folch
          </footer>
       </main>
     </TooltipProvider>
