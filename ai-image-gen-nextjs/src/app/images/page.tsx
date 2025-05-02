@@ -27,49 +27,6 @@ const genericProviders = [
 // Extract Model list for filtering (can be refined later)
 const allModels = Object.entries(availableProvidersDisplay).map(([key, value]) => ({ key: key, name: value.name }));
 
-// Async function to fetch images from Supabase
-async function getImages(): Promise<{ images: ImageRecord[] | null; error: string | null }> {
-    console.log("Fetching images from Supabase...");
-    try {
-        // Select additional metadata columns
-        const columnsToSelect = 'id, image_url, prompt_text, negative_prompt, model, provider, width, height, seed, created_at';
-        console.log(`Selecting columns: ${columnsToSelect}`);
-
-        const { data, error } = await supabase
-            .from('images') // Target the 'images' table
-            .select(columnsToSelect) // Fetch specified columns
-            .order('created_at', { ascending: false }); // Example: newest first
-
-        if (error) {
-            console.error("Supabase fetch error (images):", error);
-            if (error.code === '42P01') { // Table doesn't exist
-                 return { images: null, error: "Database Error: The 'images' table was not found." };
-            }
-             if (error.code === '42501') { // RLS error
-                 return { images: null, error: `Database Permission Error: ${error.message}. Ensure RLS allows reads on 'images'.` };
-             }
-             if (error.code === '42703') { // Column doesn't exist
-                 return { images: null, error: `Database Error: One or more requested columns (e.g., prompt_text, negative_prompt, model_used, seed) do not exist in the 'images' table. ${error.message}` };
-             }
-            return { images: null, error: `Database Error: ${error.message}` };
-        }
-
-        // Explicitly check for null data before asserting type
-        if (!data) {
-            console.log("Supabase returned null data, returning empty array.");
-            return { images: [], error: null }; // Return empty array instead of null
-        }
-
-        console.log(`Fetched ${data.length} images with extended metadata.`);
-        // Use a less strict type assertion to bypass the linter warning
-        // This assumes the selected columns DO exist in the database table.
-        return { images: data as any as ImageRecord[], error: null };
-    } catch (e: any) {
-        console.error("Unexpected error fetching images:", e);
-        return { images: null, error: `An unexpected error occurred: ${e.message}` };
-    }
-}
-
 // The Page component (Server Component by default)
 export default function ImagesPage() {
     // State for loading, images, errors, and the selected image for modal
@@ -135,9 +92,10 @@ export default function ImagesPage() {
                      setImages(data as ImageRecord[]);
                 }
 
-            } catch (e: any) {
+            } catch (e: unknown) {
                 console.error("Unexpected error fetching images:", e);
-                setError(`An unexpected error occurred: ${e.message}`);
+                const message = e instanceof Error ? e.message : String(e);
+                setError(`An unexpected error occurred: ${message}`);
                 setImages([]); // Clear images on error
             } finally {
                 setIsLoading(false);

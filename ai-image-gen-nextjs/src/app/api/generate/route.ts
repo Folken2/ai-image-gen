@@ -3,6 +3,7 @@ import type { NextRequest } from 'next/server';
 import { ImageGenerationParameters } from '@/lib/image-generation-apis/types';
 import Together from "together-ai"; // Import the library
 import OpenAI from 'openai'; // <-- Import OpenAI
+import { Image as OpenAIImage } from 'openai/resources/images.mjs'; // Explicit import for OpenAI Image type
 import Replicate from 'replicate'; // <-- Import Replicate
 // import { supabase } from '@/lib/supabase/client'; // <-- OLD Client (Anon Key)
 import { supabaseServer as supabase } from '@/lib/supabase/server'; // <-- NEW Client (Service Role Key)
@@ -25,8 +26,22 @@ async function callTogetherAIWithLibrary(params: ImageGenerationParameters & { m
     console.log(`Calling Together AI Library with model: ${params.model}`);
 
     // Determine steps based on model - Flux Schnell uses low steps
-    const defaultSteps = params.model.includes('Flux') ? 4 : 25; // Example default
-    const stepsToUse = params.steps ?? defaultSteps;
+    let stepsToUse: number;
+    const isFluxModel = params.model.includes('Flux');
+
+    if (isFluxModel) {
+        // Enforce 1-4 steps for Flux models, using provided steps only if valid, otherwise default to 4
+        const requestedSteps = params.steps;
+        if (requestedSteps !== undefined && requestedSteps >= 1 && requestedSteps <= 4) {
+            stepsToUse = requestedSteps;
+        } else {
+            stepsToUse = 4; // Default for Flux
+        }
+        console.log(`Flux model detected. Enforced steps: ${stepsToUse} (requested: ${params.steps})`);
+    } else {
+        // For non-Flux models, use provided steps or default to 25
+        stepsToUse = params.steps ?? 25; // Default for other models
+    }
 
     try {
         // Map our params to the library's expected format
@@ -51,19 +66,39 @@ async function callTogetherAIWithLibrary(params: ImageGenerationParameters & { m
             apiParams.guidance_scale = params.guidanceScale;
         }
 
-        console.log("Together AI Params:", apiParams);
+        // Add a log right before the API call to confirm the steps value being used
+        console.log(`Final steps value being sent to Together AI: ${stepsToUse}`);
+        console.log("Together AI Params (final check):", apiParams);
         const response = await together.images.create(apiParams);
 
         console.log("Together AI Library Response received");
 
-        if (response.data && Array.isArray(response.data) && response.data.length > 0 && response.data[0].b64_json) {
+        if (response.data && Array.isArray(response.data) && response.data.length > 0) {
              // Keep original base64 for immediate frontend display
-             const base64Images = response.data.map((imgData: any) => `data:image/png;base64,${imgData.b64_json}`);
+             // Filter out items without b64_json and map
+             // Use 'any' temporarily to bypass complex type inference issues
+             const base64Images = response.data
+                .filter((imgData: any) => typeof imgData?.b64_json === 'string')
+                .map((imgData: any) => `data:image/png;base64,${imgData.b64_json}`);
 
-             // --- Upload to Supabase Storage ---
+             // Handle case where no valid images were found after filtering
+             if (base64Images.length === 0) {
+                 console.error("Together AI response data did not contain valid b64_json strings.");
+                 return { success: false, error: "Received image data in an unexpected format from Together AI." };
+             }
+
+             // --- Upload to Supabase Storage --- Get first VALID image
              let storagePath = ''; // Variable to store the path
              try {
-                const firstImageBase64 = response.data[0].b64_json;
+                // Find the first item that had a valid b64_json string for upload
+                // Use 'any' temporarily
+                const firstValidImage = response.data.find((imgData: any) => typeof imgData?.b64_json === 'string');
+
+                // Check if firstValidImage and its b64_json property are defined
+                if (!firstValidImage || typeof firstValidImage.b64_json !== 'string') {
+                    throw new Error("No valid image data found to upload.");
+                }
+                const firstImageBase64 = firstValidImage.b64_json;
                 const imageBuffer = Buffer.from(firstImageBase64, 'base64');
                 const bucketName = 'images'; // <-- Use your actual bucket name
                 const filePath = `public/togetherai-${params.model.replace(/[^a-zA-Z0-9]/g, '_')}-${uuidv4()}.png`; // Unique path
@@ -175,7 +210,7 @@ async function callOpenAI(params: ImageGenerationParameters): Promise<{ success:
 
         if (response.data && response.data.length > 0 && response.data[0].b64_json) {
             // Keep original base64 for immediate frontend display
-            const base64Images = response.data.map((imgData: any) => `data:image/png;base64,${imgData.b64_json}`);
+            const base64Images = response.data.map((imgData: OpenAIImage) => `data:image/png;base64,${imgData.b64_json}`);
 
             // --- Upload to Supabase Storage ---
             let storagePath = ''; // Variable to store the path
