@@ -3,9 +3,8 @@
 import { zodResolver } from "@hookform/resolvers/zod"
 import { useForm } from "react-hook-form"
 import { z } from "zod"
-import { toast } from "sonner"; // Using sonner for toasts
-import { useState, useTransition } from "react";
-// import { useRouter } from 'next/navigation'; // <-- Remove useRouter
+import { toast } from "sonner";
+import { useState, useTransition, useEffect } from "react"; // Added useEffect
 
 import { Button } from "@/components/ui/button"
 import {
@@ -19,69 +18,89 @@ import {
 } from "@/components/ui/form"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
-import { savePromptAction } from "@/app/prompts/actions"; // Import the Server Action
+import { updatePromptAction } from "@/app/prompts/actions"; // Import the UPDATE Server Action
+import type { Prompt } from "./columns"; // Import the Prompt type
 
-// Define the form schema based on the Server Action schema
+// Define the form schema including the ID (required for update)
 const formSchema = z.object({
+  id: z.string().uuid("Invalid ID"), // ID is required for update
   name: z.string().optional(),
   prompt_text: z.string().min(1, "Prompt is required."),
   negative_prompt: z.string().optional(),
   notes: z.string().optional(),
 })
 
-type SavePromptFormProps = {
-    onSuccess?: () => void; // Renamed callback for clarity
+type EditPromptFormProps = {
+    initialData: Prompt; // Receive the prompt data to edit
+    onFormSubmit?: () => void; // Optional callback after successful submit
 };
 
-export function SavePromptForm({ onSuccess }: SavePromptFormProps) {
-  // const router = useRouter(); // <-- Remove router instance
-  const [isPending, startTransition] = useTransition(); // For loading state
+export function EditPromptForm({ initialData, onFormSubmit }: EditPromptFormProps) {
+  const [isPending, startTransition] = useTransition();
   const [serverError, setServerError] = useState<string | null>(null);
 
   // 1. Define your form.
   const form = useForm<z.infer<typeof formSchema>>({
     resolver: zodResolver(formSchema),
+    // Set default values from the initialData prop
     defaultValues: {
-      name: "",
-      prompt_text: "",
-      negative_prompt: "",
-      notes: "",
+      id: initialData.id,
+      name: initialData.name || "",
+      prompt_text: initialData.prompt_text || "", // Should always exist based on Prompt type
+      negative_prompt: initialData.negative_prompt || "",
+      notes: initialData.notes || "",
     },
-  })
+  });
+
+  // Optional: Reset form if initialData changes (though unlikely within a modal)
+  useEffect(() => {
+      form.reset({
+          id: initialData.id,
+          name: initialData.name || "",
+          prompt_text: initialData.prompt_text || "",
+          negative_prompt: initialData.negative_prompt || "",
+          notes: initialData.notes || "",
+      });
+  }, [initialData, form.reset]);
 
   // 2. Define a submit handler.
   async function onSubmit(values: z.infer<typeof formSchema>) {
-    setServerError(null); // Clear previous server errors
+    setServerError(null); 
 
-    // Use FormData for Server Action
     const formData = new FormData();
+    // Append all form values, including the ID
+    formData.append("id", values.id);
     formData.append("prompt_text", values.prompt_text);
     if (values.name) formData.append("name", values.name);
     if (values.negative_prompt) formData.append("negative_prompt", values.negative_prompt);
     if (values.notes) formData.append("notes", values.notes);
 
     startTransition(async () => {
-        const result = await savePromptAction(formData);
+        // Call the update action
+        const result = await updatePromptAction(formData);
 
         if (result.success) {
             toast.success(result.message);
-            form.reset(); // Reset form fields
-            // --- Call the onSuccess callback --- 
-            if (onSuccess) {
-                onSuccess(); // Call callback (e.g., to trigger refresh and close dialog)
+            // Optionally reset form to these new values, or just close dialog
+            // form.reset(values); // Reset with the updated values
+            if (onFormSubmit) {
+                onFormSubmit(); // Call callback (e.g., to close dialog)
             }
         } else {
-            console.error("Save prompt failed:", result.message, result.errors);
-            toast.error(result.message || "Failed to save prompt.");
+            console.error("Update prompt failed:", result.message, result.errors);
+            toast.error(result.message || "Failed to update prompt.");
             setServerError(result.message);
-            // TODO: Optionally map validation errors back to form fields if needed
         }
     });
   }
 
   return (
     <Form {...form}>
+      {/* IMPORTANT: Add hidden input for the ID */}
+      <input type="hidden" {...form.register("id")} />
+      
       <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
+        {/* Form Fields (Name, Prompt, Negative, Notes) - structure same as SavePromptForm */}
         {/* Name Field */}
         <FormField
           control={form.control}
@@ -153,11 +172,13 @@ export function SavePromptForm({ onSuccess }: SavePromptFormProps) {
             </FormItem>
           )}
         />
+
         {serverError && (
             <p className="text-sm font-medium text-destructive">{serverError}</p>
         )}
+        {/* Change button text */}
         <Button type="submit" disabled={isPending}>
-            {isPending ? "Saving..." : "Save Prompt"}
+            {isPending ? "Updating..." : "Update Prompt"}
         </Button>
       </form>
     </Form>

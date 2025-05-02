@@ -11,14 +11,14 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
-import { Copy } from "lucide-react"; // Icon for copy button
+import { Copy, ClipboardPaste } from "lucide-react"; // Added ClipboardPaste
 import { toast } from "sonner"; // For copy feedback
 
-// Keep the async function signature, but move fetch into useEffect
 export default function PromptsPage() {
   const [prompts, setPrompts] = useState<Prompt[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [fetchError, setFetchError] = useState<string | null>(null);
+  const [refreshKey, setRefreshKey] = useState(0); // <-- State to trigger refresh
 
   // --- Prompt Builder State ---
   const [mainSubject, setMainSubject] = useState("");
@@ -30,10 +30,10 @@ export default function PromptsPage() {
   const [colorPalette, setColorPalette] = useState("");
   const [cameraAngle, setCameraAngle] = useState("");
   const [artStyle, setArtStyle] = useState("");
-  const [builderNegativePrompts, setBuilderNegativePrompts] = useState("");
+  const [builderNegativePrompts, setBuilderNegativePrompts] = useState(""); // This remains the source for negative
 
-  // --- Derived State: Generated Prompt ---
-  const generatedPrompt = [
+  // --- Derived State: Generated Positive Prompt ---
+  const generatedPositivePrompt = [
     mainSubject.trim(),
     action.trim(),
     environment.trim() ? `in a ${environment.trim()}` : "",
@@ -43,15 +43,24 @@ export default function PromptsPage() {
     colorPalette.trim() ? `with a ${colorPalette.trim()} color palette` : "",
     cameraAngle.trim(),
     artStyle.trim() ? `in the style of ${artStyle.trim()}` : "",
-  ].filter(part => part).join(", ") + 
-  (builderNegativePrompts.trim() ? ` --no ${builderNegativePrompts.trim()}` : "");
+  ].filter(part => !!part) // Use !!part for clearer boolean check
+   .join(", ");
 
-  // --- Fetch Prompts Data ---
+  // --- Derived State: Generated Negative Prompt (directly from input) ---
+  const generatedNegativePrompt = builderNegativePrompts.trim();
+
+  // --- Function to trigger data refetch --- 
+  const triggerRefresh = () => {
+    console.log("Triggering prompt list refresh...");
+    setRefreshKey(prev => prev + 1);
+  };
+
+  // --- Fetch Prompts Data (depends on refreshKey) ---
   useEffect(() => {
     async function fetchPrompts() {
       setIsLoading(true);
       setFetchError(null);
-      console.log("PromptsPage (Client): Fetching prompts...");
+      console.log("PromptsPage (Client): Fetching prompts...", { refreshKey }); // Log key
       const { data, error } = await supabase
         .from('prompts')
         .select('id, created_at, name, prompt_text, negative_prompt, notes, style_tags')
@@ -67,18 +76,31 @@ export default function PromptsPage() {
       setIsLoading(false);
     }
     fetchPrompts();
-  }, []);
+  }, [refreshKey]); // <-- Add refreshKey to dependency array
 
-  // --- Handler for Copy Button ---
-  const handleCopyPrompt = () => {
-    navigator.clipboard.writeText(generatedPrompt)
+  // --- Handler for Copy Button (Positive Prompt) ---
+  const handleCopyPositivePrompt = () => {
+    navigator.clipboard.writeText(generatedPositivePrompt)
       .then(() => {
-        toast.success("Prompt copied to clipboard!");
+        toast.success("Positive prompt copied!");
       })
       .catch(err => {
-        console.error("Failed to copy prompt: ", err);
-        toast.error("Failed to copy prompt.");
+        console.error("Failed to copy positive prompt: ", err);
+        toast.error("Failed to copy positive prompt.");
       });
+  };
+  
+  // --- Handler for Copy Button (Negative Prompt) ---
+  const handleCopyNegativePrompt = () => {
+      if (!generatedNegativePrompt) return; // Don't copy if empty
+      navigator.clipboard.writeText(generatedNegativePrompt)
+          .then(() => {
+              toast.success("Negative prompt copied!");
+          })
+          .catch(err => {
+              console.error("Failed to copy negative prompt: ", err);
+              toast.error("Failed to copy negative prompt.");
+          });
   };
 
   return (
@@ -136,20 +158,57 @@ export default function PromptsPage() {
             </div>
           </div>
           
-          {/* Negative Prompt for Builder */}
+          {/* Negative Prompt Input (directly feeds generatedNegativePrompt) */}
            <div className="space-y-1 pt-4">
-              <Label htmlFor="builderNegativePrompts">Optional Negative Prompts</Label>
-              <Input id="builderNegativePrompts" value={builderNegativePrompts} onChange={(e) => setBuilderNegativePrompts(e.target.value)} placeholder="e.g., blurry, text, extra limbs" />
+              <Label htmlFor="builderNegativePrompts">Negative Prompts (Optional)</Label>
+              <Input 
+                id="builderNegativePrompts" 
+                value={builderNegativePrompts} 
+                onChange={(e) => setBuilderNegativePrompts(e.target.value)} 
+                placeholder="e.g., blurry, text, extra limbs, deformed" 
+              />
             </div>
 
-          {/* Generated Prompt Display */}
-          <div className="space-y-1 pt-4">
-            <Label htmlFor="generatedPrompt">Generated Prompt</Label>
-            <div className="flex gap-2 items-center">
-              <Textarea id="generatedPrompt" value={generatedPrompt} readOnly rows={3} className="flex-grow bg-muted/50" />
-              <Button variant="outline" size="icon" onClick={handleCopyPrompt} title="Copy Prompt">
-                <Copy className="h-4 w-4" />
-              </Button>
+          {/* Generated Prompt Display (Split Positive/Negative) */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-4">
+            {/* Positive Prompt Area */}
+            <div className="space-y-1">
+              <Label htmlFor="generatedPositivePrompt">Generated Positive Prompt</Label>
+              <div className="flex gap-2 items-start"> {/* Align items start */}
+                <Textarea 
+                  id="generatedPositivePrompt" 
+                  value={generatedPositivePrompt} 
+                  readOnly 
+                  rows={4} // Increased rows slightly
+                  className="flex-grow bg-muted/50 resize-none" // Prevent manual resize
+                />
+                <Button variant="outline" size="icon" onClick={handleCopyPositivePrompt} title="Copy Positive Prompt">
+                  <Copy className="h-4 w-4" />
+                </Button>
+              </div>
+            </div>
+            {/* Negative Prompt Area */}
+             <div className="space-y-1">
+              <Label htmlFor="generatedNegativePrompt">Generated Negative Prompt</Label>
+              <div className="flex gap-2 items-start"> {/* Align items start */} 
+                <Textarea 
+                  id="generatedNegativePrompt" 
+                  value={generatedNegativePrompt} 
+                  readOnly 
+                  rows={4} // Increased rows slightly
+                  className="flex-grow bg-muted/50 resize-none" 
+                  placeholder="No negative prompts entered."
+                />
+                <Button 
+                  variant="outline" 
+                  size="icon" 
+                  onClick={handleCopyNegativePrompt} 
+                  title="Copy Negative Prompt"
+                  disabled={!generatedNegativePrompt} // Disable if empty
+                >
+                  <Copy className="h-4 w-4" />
+                </Button>
+              </div>
             </div>
           </div>
         </CardContent>
@@ -159,7 +218,7 @@ export default function PromptsPage() {
       <div> { /* Added wrapper div */}
         <div className="flex justify-between items-center mb-6">
           <h1 className="text-3xl font-bold">Prompt Database</h1>
-          <SavePromptDialog />
+          <SavePromptDialog onSuccess={triggerRefresh} />
         </div>
         {isLoading ? (
           <p>Loading prompts...</p> // Add a loading state

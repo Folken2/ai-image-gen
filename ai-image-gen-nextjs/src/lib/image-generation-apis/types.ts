@@ -10,7 +10,8 @@ export interface ImageGenerationParameters {
   seed?: number;
   steps?: number;
   guidanceScale?: number;
-  apiKey: string; // API Key for the specific provider
+  apiKey?: string; // Should be handled server-side mostly
+  provider?: string; // <-- Add provider key/ID
   // Add other common parameters as needed
 }
 

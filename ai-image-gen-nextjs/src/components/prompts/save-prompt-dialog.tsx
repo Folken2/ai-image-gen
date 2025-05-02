@@ -14,8 +14,21 @@ import {
 import { SavePromptForm } from "./save-prompt-form"
 import { useState } from "react";
 
-export function SavePromptDialog() {
+// Accept the onSuccess callback prop
+interface SavePromptDialogProps {
+    onSuccess?: () => void;
+}
+
+export function SavePromptDialog({ onSuccess }: SavePromptDialogProps) {
   const [isOpen, setIsOpen] = useState(false);
+
+  // Define a combined handler to close the dialog AND call the parent's onSuccess
+  const handleSuccess = () => {
+      setIsOpen(false); // Close the dialog
+      if (onSuccess) {
+          onSuccess(); // Call the parent's success handler (to trigger refresh)
+      }
+  };
 
   return (
     <Dialog open={isOpen} onOpenChange={setIsOpen}>
@@ -31,7 +44,8 @@ export function SavePromptDialog() {
           </DialogDescription>
         </DialogHeader>
         <div className="py-4">
-          <SavePromptForm onFormSubmit={() => setIsOpen(false)} /> {/* Pass callback to close dialog */}
+          {/* Pass the combined handler down to the form */}
+          <SavePromptForm onSuccess={handleSuccess} /> 
         </div>
          {/* Optional Footer with explicit close button if needed */}
          {/* <DialogFooter>

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -35,16 +35,19 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { getSavedPrompts } from '@/app/prompts/actions';
+
+// --- Exported Definitions ---
 
 // Define the structure for a style option
-interface StyleOption {
+export interface StyleOption {
   id: string;
   name: string;
   imageUrl: string; // Placeholder image URL for now
 }
 
 // Define available styles
-const availableStyles: StyleOption[] = [
+export const availableStyles: StyleOption[] = [
   // { id: "none", name: "None", imageUrl: "/style-placeholders/none.png" }, // Removed "None" style
   { id: "cinematic", name: "Cinematic", imageUrl: "/style-placeholders/cinematic.png" },
   { id: "photographic", name: "Photographic", imageUrl: "/style-placeholders/photographic.png" },
@@ -53,35 +56,210 @@ const availableStyles: StyleOption[] = [
   { id: "cyberpunk", name: "Cyberpunk", imageUrl: "/style-placeholders/cyberpunk.png" },
   { id: "sketch", name: "Sketch", imageUrl: "/style-placeholders/sketch.png" },
   // Add more styles here
+  { id: "cartoon", name: "Cartoon", imageUrl: "/style-placeholders/cartoon.png" },
+  { id: "3d-cartoon", name: "3D Cartoon", imageUrl: "/style-placeholders/3d-cartoon.png" },
+  { id: "ghibli-esque", name: "Ghibli-esque", imageUrl: "/style-placeholders/ghibli.png" },
 ];
 
 // Define available providers (for display purposes)
-const availableProvidersDisplay: { [key: string]: { name: string } } = {
+export const availableProvidersDisplay: { [key: string]: { name: string } } = {
+  // --- Reordered List ---
+  togetherai: { name: "Together AI (Flux1.1 Schnell - Free)" },
+  "black-forest-labs/FLUX.1.1-pro": { name: "Together AI (FLUX 1.1 Pro)" },
   openai: { name: "OpenAI (gpt-image-1)" },
-  replicate: { name: "Replicate" },
-  stabilityai: { name: "Stability AI" },
-  flux: { name: "Flux" },
-  togetherai: { name: "Together AI (Flux1.1 Schnell)" }, // Can add specific model later
+  // stabilityai: { name: "Stability AI" }, // Removed generic entry
+  // --- Replicate Models ---
+  "bytedance/sdxl-lightning-4step:6f7a773af6fc3e8de9d5a3c00be77c17308914bf67772726aff83496ba1e3bbe": { name: "Replicate (SDXL Lightning 4-Step)" },
+  "google/imagen-3": { name: "Replicate (Google Imagen 3 - Needs Access)" }, // Placeholder, Imagen 3 might not be public/available via Replicate API
+  "ai-forever/kandinsky-2.2:ad9d7879fbffa2874e1d909d1d37d9bc682889cc65b31f7bb00d2362619f194a": { name: "Replicate (Kandinsky 2.2)" },
+  "stability-ai/sdxl:7762fd07cf82c948538e41f63f77d685e02b063e37e496e96eefd46c929f9bdc": { name: "Replicate (Stability AI SDXL)" },
+  "stability-ai/stable-diffusion:ac732df83cea7fff18b8472768c88ad041fa750ff7682a21affe81863cbe77e4": { name: "Replicate (Stable Diffusion 1.5)" },
+  // "ideogram-ai/ideogram-v2": { name: "Replicate (Ideogram V2 - Needs Access)" }, // Removed
 };
 
-// Default values for advanced options
-const DEFAULT_STEPS = 4; // Default for Flux Schnell
-const DEFAULT_GUIDANCE_SCALE = 7;
+// Define the structure for a saved prompt (based on action's select)
+interface SavedPrompt {
+  id: string;
+  name?: string | null;
+  prompt_text: string | null; // Allow null based on potential DB schema
+}
+
+// Define model capabilities (can be expanded)
+interface ModelCapabilities {
+  supportsNegativePrompt: boolean;
+  supportsGuidanceScale: boolean;
+  supportedSteps: { min: number; max: number; default: number } | null; // null if not applicable
+  supportedDimensions: string[] | null; // null if standard 1024x* options are fine
+  maxImageCount: number;
+}
+
+// Map providers/models to capabilities
+const modelCapabilities: Record<string, ModelCapabilities> = {
+  // --- Default/Fallback --- 
+  default: {
+    supportsNegativePrompt: true,
+    supportsGuidanceScale: true,
+    supportedSteps: { min: 1, max: 50, default: 25 },
+    supportedDimensions: null, // Use standard list
+    maxImageCount: 4,
+  },
+  // --- OpenAI ---
+  openai: {
+    supportsNegativePrompt: false,
+    supportsGuidanceScale: false,
+    supportedSteps: null, // Not user-configurable
+    supportedDimensions: ["1024x1024", "1792x1024", "1024x1792"],
+    maxImageCount: 1,
+  },
+  // --- Together AI ---
+  togetherai: { // Flux Schnell Free
+    supportsNegativePrompt: true,
+    supportsGuidanceScale: false, // Flux models typically don't use CFG
+    supportedSteps: { min: 1, max: 10, default: 4 }, // Flux uses few steps
+    supportedDimensions: null,
+    maxImageCount: 4,
+  },
+  "black-forest-labs/FLUX.1.1-pro": {
+    supportsNegativePrompt: true,
+    supportsGuidanceScale: false, // Flux models typically don't use CFG
+    supportedSteps: { min: 1, max: 10, default: 8 }, // Pro might allow slightly more?
+    supportedDimensions: null,
+    maxImageCount: 4,
+  },
+  // --- Replicate Models ---
+  "bytedance/sdxl-lightning-4step": {
+    supportsNegativePrompt: true,
+    supportsGuidanceScale: true, // Often low values like 1-2 work best
+    supportedSteps: { min: 1, max: 8, default: 4 }, // Fixed at 4 essentially
+    supportedDimensions: null,
+    maxImageCount: 4,
+  },
+  "ai-forever/kandinsky-2.2": {
+    supportsNegativePrompt: true,
+    supportsGuidanceScale: true,
+    supportedSteps: { min: 1, max: 100, default: 50 },
+    supportedDimensions: null,
+    maxImageCount: 4,
+  },
+  "stability-ai/sdxl": {
+    supportsNegativePrompt: true,
+    supportsGuidanceScale: true,
+    supportedSteps: { min: 1, max: 50, default: 25 },
+    supportedDimensions: null,
+    maxImageCount: 4,
+  },
+  "stability-ai/stable-diffusion": { // Assuming v1.5
+    supportsNegativePrompt: true,
+    supportsGuidanceScale: true,
+    supportedSteps: { min: 1, max: 100, default: 50 },
+    supportedDimensions: null,
+    maxImageCount: 4,
+  },
+  "google/imagen-3": { // Assuming Imagen 3 capabilities
+      supportsNegativePrompt: true, // Usually supported
+      supportsGuidanceScale: false, // Imagen doesn't typically use CFG scale
+      supportedSteps: null, // Not typically configurable
+      supportedDimensions: ["1024x1024", "1792x1024", "1024x1792", "1024x1536", "1536x1024"], // Example sizes, verify!
+      maxImageCount: 1, // Often limited
+  },
+  // Add other specific model IDs as needed
+};
+
+// Default values for advanced options (will be overridden by useEffect)
+const BASE_DEFAULT_STEPS = 25;
+const BASE_DEFAULT_GUIDANCE_SCALE = 7;
 
 export default function Home() {
   // --- State Variables ---
-  const [selectedProvider, setSelectedProvider] = useState<string>("flux");
+  const [selectedProvider, setSelectedProvider] = useState<string>("togetherai"); // Default to free flux
   const [prompt, setPrompt] = useState("");
   const [negativePrompt, setNegativePrompt] = useState("");
-  const [seed, setSeed] = useState<number | string>(""); // Use string for input, number for API
-  const [steps, setSteps] = useState<number[]>([DEFAULT_STEPS]);
-  const [guidanceScale, setGuidanceScale] = useState<number[]>([DEFAULT_GUIDANCE_SCALE]);
+  const [seed, setSeed] = useState<number | string>("");
+  const [steps, setSteps] = useState<number[]>([BASE_DEFAULT_STEPS]);
+  const [guidanceScale, setGuidanceScale] = useState<number[]>([BASE_DEFAULT_GUIDANCE_SCALE]);
   const [dimensions, setDimensions] = useState("1024x1024");
   const [imageCount, setImageCount] = useState("1");
   const [selectedStyle, setSelectedStyle] = useState<string>("cinematic");
   const [generatedImages, setGeneratedImages] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [savedPrompts, setSavedPrompts] = useState<SavedPrompt[]>([]);
+  const [loadingPrompts, setLoadingPrompts] = useState(true);
+
+  // --- State for Dynamic UI Control ---
+  const [currentCapabilities, setCurrentCapabilities] = useState<ModelCapabilities>(modelCapabilities.togetherai); // Initialize with default provider
+  const [stepsConfig, setStepsConfig] = useState<{ min: number; max: number; disabled: boolean }>({ min: 1, max: 50, disabled: false });
+  const [guidanceConfig, setGuidanceConfig] = useState<{ min: number; max: number; disabled: boolean }>({ min: 0, max: 20, disabled: false });
+  const [dimensionOptions, setDimensionOptions] = useState<string[]>(["1024x1024", "1024x1792", "1792x1024"]); // Default options
+
+  // --- Fetch Saved Prompts on Mount ---
+  useEffect(() => {
+    async function fetchPrompts() {
+      setLoadingPrompts(true);
+      try {
+        const result = await getSavedPrompts();
+        if (result.success && result.data) {
+          // Filter out any prompts with null text just in case, though it shouldn't happen based on schema
+          const validPrompts = result.data.filter(p => p.prompt_text !== null) as SavedPrompt[]; 
+          setSavedPrompts(validPrompts);
+        } else {
+          console.error("Failed to fetch saved prompts:", result.message);
+          setSavedPrompts([]); // Ensure state is an empty array on error
+        }
+      } catch (err) {
+        console.error("Error fetching saved prompts:", err);
+        setSavedPrompts([]); // Ensure state is an empty array on error
+      }
+      setLoadingPrompts(false);
+    }
+    fetchPrompts();
+  }, []); // Empty dependency array means run once on mount
+
+   // --- Update UI based on Provider/Model Change ---
+   useEffect(() => {
+    const providerKey = selectedProvider.includes('/') ? selectedProvider.split(':')[0] : selectedProvider; // Use base ID or full ID if versioned
+    const capabilities = modelCapabilities[providerKey] || modelCapabilities[selectedProvider] || modelCapabilities.default;
+    setCurrentCapabilities(capabilities);
+    console.log(`Provider changed to: ${selectedProvider}, Capabilites:`, capabilities);
+
+    // Update Steps Slider
+    if (capabilities.supportedSteps) {
+      setStepsConfig({ min: capabilities.supportedSteps.min, max: capabilities.supportedSteps.max, disabled: false });
+      // Reset steps to default if current value is out of new range
+      if (steps[0] < capabilities.supportedSteps.min || steps[0] > capabilities.supportedSteps.max) {
+          setSteps([capabilities.supportedSteps.default]);
+      }
+    } else {
+      setStepsConfig({ min: 1, max: 1, disabled: true }); // Disable if not applicable
+      setSteps([1]);
+    }
+
+    // Update Guidance Scale Slider
+    setGuidanceConfig({ min: 0, max: 20, disabled: !capabilities.supportsGuidanceScale });
+    if (!capabilities.supportsGuidanceScale) {
+        setGuidanceScale([BASE_DEFAULT_GUIDANCE_SCALE]); // Reset to base default if disabled
+    }
+
+    // Update Dimension Options
+    const standardDimensions = ["1024x1024", "1024x1792", "1792x1024"];
+    const newDimensionOptions = capabilities.supportedDimensions || standardDimensions;
+    setDimensionOptions(newDimensionOptions);
+    // Reset dimension if current selection is no longer valid
+    if (!newDimensionOptions.includes(dimensions)) {
+        setDimensions(newDimensionOptions[0]); // Default to the first available option
+    }
+
+     // Update Image Count
+    if (imageCount !== "1" && capabilities.maxImageCount === 1) {
+        setImageCount("1");
+    }
+
+    // Clear negative prompt if not supported
+    if (!capabilities.supportsNegativePrompt && negativePrompt !== "") {
+        setNegativePrompt("");
+    }
+
+  }, [selectedProvider]); // Rerun ONLY when provider changes
 
   // --- Handlers ---
   const handleGenerate = async () => {
@@ -112,14 +290,14 @@ export default function Home() {
     const requestBody = {
       provider: selectedProvider,
       prompt,
-      negativePrompt: negativePrompt.trim() || undefined,
+      negativePrompt: currentCapabilities.supportsNegativePrompt ? (negativePrompt.trim() || undefined) : undefined,
       width,
       height,
       numOutputs,
       style: selectedStyle === "none" ? undefined : selectedStyle,
       seed: seedValue,
-      steps: steps[0], // Get value from slider array
-      guidanceScale: guidanceScale[0], // Get value from slider array
+      steps: currentCapabilities.supportedSteps ? steps[0] : undefined,
+      guidanceScale: currentCapabilities.supportsGuidanceScale ? guidanceScale[0] : undefined,
     };
 
     console.log("Sending request to /api/generate:", requestBody);
@@ -157,12 +335,12 @@ export default function Home() {
     setPrompt("");
     setNegativePrompt("");
     setSeed("");
-    setSteps([DEFAULT_STEPS]);
-    setGuidanceScale([DEFAULT_GUIDANCE_SCALE]);
+    setSteps([BASE_DEFAULT_STEPS]);
+    setGuidanceScale([BASE_DEFAULT_GUIDANCE_SCALE]);
     setDimensions("1024x1024");
     setImageCount("1");
     setSelectedStyle("cinematic");
-    setSelectedProvider("flux");
+    setSelectedProvider("togetherai");
     setGeneratedImages([]);
     setError(null);
     setIsLoading(false);
@@ -194,7 +372,7 @@ export default function Home() {
               {/* --- Provider Selection --- */}
               <div className="space-y-2">
                 <Label htmlFor="provider">Provider</Label>
-                <Select value={selectedProvider} onValueChange={setSelectedProvider} defaultValue="flux">
+                <Select value={selectedProvider} onValueChange={setSelectedProvider}>
                   <SelectTrigger id="provider">
                     <SelectValue placeholder="Select provider" />
                   </SelectTrigger>
@@ -206,6 +384,35 @@ export default function Home() {
                 </Select>
               </div>
 
+              {/* --- Saved Prompt Selector --- */}
+              <div className="space-y-2">
+                <Label htmlFor="saved-prompt">Load Saved Prompt</Label>
+                <Select
+                  value={savedPrompts.find(p => p.prompt_text === prompt)?.id || ""} // Set current value if prompt matches
+                  onValueChange={(value) => {
+                    const selected = savedPrompts.find(p => p.id === value);
+                    // Ensure prompt_text is not null before setting
+                    if (selected && selected.prompt_text) { 
+                      setPrompt(selected.prompt_text);
+                      // Optionally update negative prompt too if saved?
+                    }
+                  }}
+                  disabled={loadingPrompts || savedPrompts.length === 0}
+                >
+                  <SelectTrigger id="saved-prompt">
+                    <SelectValue placeholder={loadingPrompts ? "Loading prompts..." : "Select a saved prompt..."} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {savedPrompts.map((p) => (
+                      <SelectItem key={p.id} value={p.id}>
+                        {p.name || `Prompt ${p.id.substring(0, 6)}...`} 
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {/* --- Main Prompt Input --- */}
               <div className="space-y-2">
                 <Label htmlFor="prompt">Prompt</Label>
                 <Textarea
@@ -219,29 +426,29 @@ export default function Home() {
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label htmlFor="dimensions">Dimensions</Label>
-                  <Select value={dimensions} onValueChange={setDimensions} defaultValue="1024x1024">
+                  <Select value={dimensions} onValueChange={setDimensions}>
                     <SelectTrigger id="dimensions">
                       <SelectValue placeholder="Select dimensions" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="1024x1024">1024 x 1024</SelectItem>
-                      <SelectItem value="1024x1792">1024 x 1792</SelectItem>
-                      <SelectItem value="1792x1024">1792 x 1024</SelectItem>
-                      {/* Add more dimensions as needed */}
+                       {/* Dynamically generate options */} 
+                       {dimensionOptions.map((dim) => (
+                          <SelectItem key={dim} value={dim}>{dim.replace('x', ' x ')}</SelectItem>
+                       ))}
                     </SelectContent>
                   </Select>
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="image-count">Image count</Label>
-                  <Select value={imageCount} onValueChange={setImageCount} defaultValue="1">
+                   <Select value={imageCount} onValueChange={setImageCount} disabled={currentCapabilities.maxImageCount === 1}>
                     <SelectTrigger id="image-count">
                       <SelectValue placeholder="Select count" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="1">1</SelectItem>
-                      <SelectItem value="2">2</SelectItem>
-                      <SelectItem value="3">3</SelectItem>
-                      <SelectItem value="4">4</SelectItem>
+                       {/* Generate options up to max count */} 
+                       {Array.from({ length: currentCapabilities.maxImageCount }, (_, i) => i + 1).map(count => (
+                           <SelectItem key={count} value={String(count)}>{count}</SelectItem>
+                       ))}
                     </SelectContent>
                   </Select>
                 </div>
@@ -299,6 +506,7 @@ export default function Home() {
                         value={negativePrompt}
                         onChange={(e) => setNegativePrompt(e.target.value)}
                         rows={2}
+                        disabled={!currentCapabilities.supportsNegativePrompt}
                       />
                     </div>
 
@@ -324,7 +532,7 @@ export default function Home() {
                     </div>
 
                     {/* Steps Slider */}
-                    <div className="space-y-3">
+                    <div className={`space-y-3 ${stepsConfig.disabled ? 'opacity-50 cursor-not-allowed' : ''}`}>
                       <div className="flex justify-between items-center">
                          <Tooltip delayDuration={100}>
                            <TooltipTrigger asChild>
@@ -338,16 +546,17 @@ export default function Home() {
                       </div>
                       <Slider
                         id="steps"
-                        min={1}
-                        max={50}
+                        min={stepsConfig.min}
+                        max={stepsConfig.max}
                         step={1}
                         value={steps}
                         onValueChange={setSteps}
+                        disabled={stepsConfig.disabled}
                       />
                     </div>
 
                     {/* Guidance Scale Slider */}
-                    <div className="space-y-3">
+                    <div className={`space-y-3 ${guidanceConfig.disabled ? 'opacity-50 cursor-not-allowed' : ''}`}>
                       <div className="flex justify-between items-center">
                          <Tooltip delayDuration={100}>
                            <TooltipTrigger asChild>
@@ -361,11 +570,12 @@ export default function Home() {
                       </div>
                       <Slider
                         id="guidance-scale"
-                        min={1}
-                        max={20}
+                        min={guidanceConfig.min}
+                        max={guidanceConfig.max}
                         step={0.5}
                         value={guidanceScale}
                         onValueChange={setGuidanceScale}
+                        disabled={guidanceConfig.disabled}
                       />
                     </div>
                   </AccordionContent>

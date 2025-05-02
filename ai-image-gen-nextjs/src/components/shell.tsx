@@ -18,7 +18,6 @@ const navItems = [
   { name: "Generate", href: "/generate", icon: Wand2 }, 
   { name: "Prompts", href: "/prompts", icon: FileText },
   { name: "Images", href: "/images", icon: ImageIcon },
-  { name: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
 ];
 
 export function Shell({ children }: { children: React.ReactNode }) {

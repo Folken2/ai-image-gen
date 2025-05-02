@@ -4,59 +4,58 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { DownloadIcon, XIcon } from 'lucide-react';
+import { ImageRecord } from '@/types/images'; // <-- Import shared type
 
-// Re-use the ImageRecord type or define it if not globally available
-// If defined elsewhere (e.g., in the page), import it
-interface ImageRecord {
-    id: number;
-    image_url: string;
-    prompt_text?: string | null;
-    negative_prompt?: string | null;
-    model?: string | null;
-    seed?: number | null;
-    created_at?: string;
-    // Include provider, width, height if needed from page.tsx changes
-    provider?: string; 
-    width?: number;
-    height?: number;
-}
+// // Re-use the ImageRecord type or define it if not globally available (REMOVED)
+// // If defined elsewhere (e.g., in the page), import it
+// interface ImageRecord {
+//     id: number;
+//     image_url: string;
+//     prompt_text?: string | null;
+//     negative_prompt?: string | null;
+//     model?: string | null;
+//     seed?: number | null;
+//     created_at?: string;
+//     provider?: string; 
+//     width?: number;
+//     height?: number;
+//     style?: string | null;
+//     steps?: number | null;
+//     guidance_scale?: number | null;
+// }
 
 interface ImageDetailModalProps {
-    image: ImageRecord | null; // Image can be null initially
+    image: ImageRecord; // Assume image is provided when open
+    isOpen: boolean; // Control visibility explicitly
+    imageUrl: string; // Pass the constructed public URL
     onClose: () => void;
 }
 
-export function ImageDetailModal({ image, onClose }: ImageDetailModalProps) {
-    if (!image) return null; // Don't render if no image is selected
+export function ImageDetailModal({ image, isOpen, imageUrl, onClose }: ImageDetailModalProps) {
+    // if (!image) return null; // Don't render if no image is selected
 
     // Function to handle download
     const handleDownload = async () => {
-        if (!image.image_url) return;
+        if (!imageUrl || imageUrl === '/placeholder.png') return;
         try {
-            // Fetch the image as a blob
-            const response = await fetch(image.image_url);
+            const response = await fetch(imageUrl);
             if (!response.ok) throw new Error('Network response was not ok.');
             const blob = await response.blob();
 
-            // Create a temporary link element
             const link = document.createElement('a');
             link.href = URL.createObjectURL(blob);
             
-            // Suggest a filename (e.g., based on ID or prompt)
             const filename = `image_${image.id}.${blob.type.split('/')[1] || 'png'}`;
             link.download = filename;
 
-            // Trigger download
             document.body.appendChild(link);
             link.click();
 
-            // Clean up
             document.body.removeChild(link);
             URL.revokeObjectURL(link.href);
 
         } catch (error) {
             console.error("Error downloading image:", error);
-            // Optionally show an error message to the user
             alert("Failed to download image.");
         }
     };
@@ -72,28 +71,28 @@ export function ImageDetailModal({ image, onClose }: ImageDetailModalProps) {
     };
 
     return (
-        <Dialog open={!!image} onOpenChange={(open) => !open && onClose()}> 
-            <DialogContent className="max-w-4xl max-h-[90vh] flex flex-col sm:flex-row p-0 gap-0"> 
-                {/* Image Section */} 
-                <div className="w-full sm:w-1/2 md:w-2/3 flex-shrink-0 bg-muted flex items-center justify-center p-4 relative"> 
+        <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
+            <DialogContent className="max-w-5xl max-h-[95vh] flex flex-col gap-0 p-4">
+                <div className="w-full flex-shrink-0 bg-muted flex items-center justify-center relative border-b mb-4 mt-6 rounded-lg overflow-hidden">
                     <Image
-                        src={image.image_url}
+                        src={imageUrl}
                         alt={image.prompt_text || `Generated image ${image.id}`}
-                        width={image.width || 800} // Use actual width if available
-                        height={image.height || 800} // Use actual height if available
-                        objectFit="contain"
-                        className="max-w-full max-h-[80vh] rounded-md"
+                        width={image.width || 1024}
+                        height={image.height || 1024}
+                        style={{ objectFit: "contain" }}
+                        className="max-w-full max-h-[55vh]"
+                        onError={(e) => {
+                            console.error(`Failed to load image in modal: ${imageUrl}`);
+                        }}
                     />
                 </div>
 
-                {/* Metadata Section */} 
-                <div className="w-full sm:w-1/2 md:w-1/3 flex flex-col"> 
-                    <DialogHeader className="p-4 border-b"> 
+                <div className="w-full flex flex-col flex-grow overflow-hidden">
+                    <DialogHeader className="border-b flex-shrink-0 pb-2 mb-2">
                         <DialogTitle>Image Details</DialogTitle>
                     </DialogHeader>
-                    <ScrollArea className="flex-grow p-4"> 
-                        <div className="space-y-3 text-sm"> 
-                            {/* Display Metadata - adjust keys/labels as needed */}
+                    <ScrollArea className="flex-grow overflow-y-auto pr-2">
+                        <div className="space-y-3 text-sm">
                             {image.prompt_text && (
                                 <div>
                                     <strong className="block font-medium">Prompt:</strong>
@@ -125,6 +124,30 @@ export function ImageDetailModal({ image, onClose }: ImageDetailModalProps) {
                                     <p className="text-muted-foreground">{image.seed}</p>
                                 </div>
                             )}
+                            {image.style && (
+                                <div>
+                                    <strong className="block font-medium">Style:</strong>
+                                    <p className="text-muted-foreground">{image.style}</p>
+                                </div>
+                            )}
+                            {image.steps !== null && image.steps !== undefined && (
+                                <div>
+                                    <strong className="block font-medium">Steps:</strong>
+                                    <p className="text-muted-foreground">{image.steps}</p>
+                                </div>
+                            )}
+                            {image.guidance_scale !== null && image.guidance_scale !== undefined && (
+                                <div>
+                                    <strong className="block font-medium">Guidance Scale:</strong>
+                                    <p className="text-muted-foreground">{image.guidance_scale}</p>
+                                </div>
+                            )}
+                            {image.negative_prompt && (
+                                <div>
+                                    <strong className="block font-medium">Negative Prompt:</strong>
+                                    <p className="text-muted-foreground break-words">{image.negative_prompt}</p>
+                                </div>
+                            )}
                             <div>
                                 <strong className="block font-medium">Created At:</strong>
                                 <p className="text-muted-foreground">{formatDate(image.created_at)}</p>
@@ -133,16 +156,13 @@ export function ImageDetailModal({ image, onClose }: ImageDetailModalProps) {
                                 <strong className="block font-medium">ID:</strong>
                                 <p className="text-muted-foreground">{image.id}</p>
                             </div>
-                             {/* Add more fields if needed */}
                         </div>
                     </ScrollArea>
-                    <DialogFooter className="p-4 border-t mt-auto"> 
+                    <DialogFooter className="border-t flex-shrink-0 pt-2 mt-2">
                         <Button onClick={handleDownload} variant="default" size="sm">
                             <DownloadIcon className="mr-2 h-4 w-4" />
                             Download
                         </Button>
-                         {/* Close button can be removed if using DialogClose */} 
-                         {/* <Button onClick={onClose} variant="outline" size="sm">Close</Button> */}
                     </DialogFooter>
                 </div>
             </DialogContent>
