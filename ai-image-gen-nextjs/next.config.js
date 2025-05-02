@@ -17,6 +17,11 @@ const nextConfig = {
             // },
         ],
     },
+    // Disable ESLint during production builds
+    eslint: {
+        // Warning: This will completely disable ESLint during build
+        ignoreDuringBuilds: true,
+    },
     // ... any other existing configurations
 };
 

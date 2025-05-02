@@ -8,8 +8,6 @@ import {
   DialogHeader,
   DialogTitle,
   DialogTrigger,
-  DialogFooter, // Import if needed for separate actions
-  DialogClose, // To close the dialog
 } from "@/components/ui/dialog"
 import { SavePromptForm } from "./save-prompt-form"
 import { useState } from "react";
@@ -40,7 +38,7 @@ export function SavePromptDialog({ onSuccess }: SavePromptDialogProps) {
         <DialogHeader>
           <DialogTitle>Save New Prompt</DialogTitle>
           <DialogDescription>
-            Enter the details for your new prompt below. Click save when you're done.
+            Enter the details for your new prompt below. Click save when you&apos;re done.
           </DialogDescription>
         </DialogHeader>
         <div className="py-4">

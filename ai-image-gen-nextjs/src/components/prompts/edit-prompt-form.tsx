@@ -61,7 +61,7 @@ export function EditPromptForm({ initialData, onFormSubmit }: EditPromptFormProp
           negative_prompt: initialData.negative_prompt || "",
           notes: initialData.notes || "",
       });
-  }, [initialData, form.reset]);
+  }, [initialData, form]);
 
   // 2. Define a submit handler.
   async function onSubmit(values: z.infer<typeof formSchema>) {
