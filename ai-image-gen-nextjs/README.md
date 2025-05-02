@@ -14,6 +14,7 @@ This project is a web application built with [Next.js](https://nextjs.org) that 
 *   Advanced options: Negative prompt, Seed, Steps, Guidance Scale.
 *   Uses Supabase for storing image generation metadata.
 *   Built with Next.js App Router, TypeScript, Tailwind CSS, and Shadcn/UI.
+*   Includes Vercel Analytics for visitor tracking and performance monitoring.
 
 ## Getting Started
 
