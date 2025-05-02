@@ -16,6 +16,7 @@ export interface ModelCapabilities {
 export interface ProviderDisplayInfo {
     name: string;
     capabilities: ModelCapabilities;
+    available: boolean;
 }
 
 // Default capabilities (apply if a provider isn't explicitly listed)
@@ -27,12 +28,12 @@ export const defaultCapabilities: ModelCapabilities = {
   maxImageCount: 4,
 };
 
-const dallECapabilities: ModelCapabilities = {
-  supportsNegativePrompt: false, // DALL-E 3 API doesn't explicitly take negative_prompt
+const gpt4oVisionCapabilities: ModelCapabilities = {
+  supportsNegativePrompt: false, // GPT-4o Vision API doesn't explicitly take negative_prompt
   supportsGuidanceScale: false,
   supportedSteps: null, // Not applicable
   supportedDimensions: ["1024x1024", "1024x1792", "1792x1024"], // Specific required sizes
-  maxImageCount: 1,
+  maxImageCount: 10, // OpenAI API supports up to 10 images
 };
 
 const sdxlCapabilities: ModelCapabilities = {
@@ -61,10 +62,10 @@ const fluxSchnellCapabilities: ModelCapabilities = {
 // Define the structure and capabilities for each provider/model
 export const availableProvidersDisplay: { [key: string]: ProviderDisplayInfo } = {
   // Key should match the value used in state/API calls
-  togetherai: { name: "Together AI (Flux Schnell - Free)", capabilities: fluxSchnellCapabilities }, // <-- Use specific capabilities
-  openai: { name: "OpenAI (DALL-E 3)", capabilities: dallECapabilities },
-  "replicate/stability-ai/sdxl:7762fd07cf82c948538e41f63f77d685e02b063e37e496e96eefd46c929f9bdc": { name: "Replicate (SDXL)", capabilities: sdxlCapabilities },
-  "replicate/bytedance/sdxl-lightning-4step:6f7a773af6fc3e8de9d5a3c00be77c17308914bf67772726aff83496ba1e3bbe": { name: "Replicate (SDXL Lightning)", capabilities: sdxlLightningCapabilities },
+  togetherai: { name: "Together AI (Flux Schnell - Free)", capabilities: fluxSchnellCapabilities, available: true }, // Only this one is available
+  openai: { name: "OpenAI (GPT-4o Vision)", capabilities: gpt4oVisionCapabilities, available: false },
+  "replicate/stability-ai/sdxl:7762fd07cf82c948538e41f63f77d685e02b063e37e496e96eefd46c929f9bdc": { name: "Replicate (SDXL)", capabilities: sdxlCapabilities, available: false },
+  "replicate/bytedance/sdxl-lightning-4step:6f7a773af6fc3e8de9d5a3c00be77c17308914bf67772726aff83496ba1e3bbe": { name: "Replicate (SDXL Lightning)", capabilities: sdxlLightningCapabilities, available: false },
   // Add other models with their specific capabilities here
 };
 

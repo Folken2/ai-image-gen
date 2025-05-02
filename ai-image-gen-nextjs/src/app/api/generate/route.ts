@@ -12,7 +12,9 @@ import { Buffer } from 'buffer'; // <-- Import Buffer for Base64 decoding
 import { v4 as uuidv4 } from 'uuid'; // <-- Import UUID for unique filenames
 
 // Instantiate the clients
-const together = new Together();
+const together = new Together({
+  apiKey: process.env.TOGETHER_API_KEY,
+});
 const openai = new OpenAI(); // Reads OPENAI_API_KEY from process.env
 const replicate = new Replicate({ // Reads REPLICATE_API_TOKEN from process.env
   auth: process.env.REPLICATE_API_TOKEN,
@@ -23,159 +25,167 @@ type ImageInsert = Database['public']['Tables']['images']['Insert'];
 
 // Refactored function using the together-ai library
 async function callTogetherAIWithLibrary(params: ImageGenerationParameters & { model: string }): Promise<{ success: boolean; images?: string[]; error?: string }> {
-    console.log(`Calling Together AI Library with model: ${params.model}`);
-
-    // Determine steps based on model - Flux Schnell uses low steps
-    let stepsToUse: number;
-    const isFluxModel = params.model.includes('Flux');
-
-    if (isFluxModel) {
-        // Enforce 1-4 steps for Flux models, using provided steps only if valid, otherwise default to 4
-        const requestedSteps = params.steps;
-        if (requestedSteps !== undefined && requestedSteps >= 1 && requestedSteps <= 4) {
-            stepsToUse = requestedSteps;
-        } else {
-            stepsToUse = 4; // Default for Flux
-        }
-        console.log(`Flux model detected. Enforced steps: ${stepsToUse} (requested: ${params.steps})`);
-    } else {
-        // For non-Flux models, use provided steps or default to 25
-        stepsToUse = params.steps ?? 25; // Default for other models
-    }
-
     try {
-        // Map our params to the library's expected format
-        const apiParams: any = {
+        console.log(`Calling Together API model: ${params.model}`);
+
+        // Use the API key from params or fallback to environment variable
+        const apiKey = params.apiKey || process.env.TOGETHER_API_KEY;
+        if (!apiKey) {
+            return { success: false, error: "TogetherAI API key not provided" };
+        }
+
+        // Initialize Together client properly with the API key
+        const together = new Together({
+            apiKey: apiKey,
+        });
+
+        // Determine steps based on model - Flux Schnell uses low steps
+        let stepsToUse: number;
+        const isFluxModel = params.model.includes('Flux');
+
+        if (isFluxModel) {
+            // Enforce 1-4 steps for Flux models, using provided steps only if valid, otherwise default to 4
+            const requestedSteps = params.steps;
+            if (requestedSteps !== undefined && requestedSteps >= 1 && requestedSteps <= 4) {
+                stepsToUse = requestedSteps;
+            } else {
+                stepsToUse = 4; // Default for Flux
+            }
+            console.log(`Flux model detected. Enforced steps: ${stepsToUse} (requested: ${params.steps})`);
+        } else {
+            // For non-Flux models, use provided steps or default to 25
+            stepsToUse = params.steps ?? 25; // Default for other models
+        }
+
+        // Log for debugging
+        console.log(`Final steps value being sent to Together AI: ${stepsToUse}`);
+        
+        // Use the official Together client API as shown in docs
+        const response = await together.images.create({
             model: params.model,
             prompt: params.prompt,
             n: params.numOutputs,
             width: params.width,
             height: params.height,
             steps: stepsToUse,
-            response_format: "base64",
-        };
-        if (params.negativePrompt) {
-            apiParams.negative_prompt = params.negativePrompt;
-        }
-        if (params.seed !== undefined) {
-            apiParams.seed = params.seed;
-        }
-        // Conditionally add guidance_scale if the model supports it (or if supported by API)
-        // Flux Schnell might ignore this. SDXL models typically use it.
-        if (!params.model.includes('Flux') && params.guidanceScale !== undefined) {
-            apiParams.guidance_scale = params.guidanceScale;
-        }
+            // No response_format needed with the client library
+            negative_prompt: params.negativePrompt,
+            seed: params.seed,
+        });
 
-        // Add a log right before the API call to confirm the steps value being used
-        console.log(`Final steps value being sent to Together AI: ${stepsToUse}`);
-        console.log("Together AI Params (final check):", apiParams);
-        const response = await together.images.create(apiParams);
-
-        console.log("Together AI Library Response received");
+        console.log("Together AI Library Response received:", response);
 
         if (response.data && Array.isArray(response.data) && response.data.length > 0) {
-             // Keep original base64 for immediate frontend display
-             // Filter out items without b64_json and map
-             // Use 'any' temporarily to bypass complex type inference issues
-             const base64Images = response.data
-                .filter((imgData: any) => typeof imgData?.b64_json === 'string')
-                .map((imgData: any) => `data:image/png;base64,${imgData.b64_json}`);
-
-             // Handle case where no valid images were found after filtering
-             if (base64Images.length === 0) {
-                 console.error("Together AI response data did not contain valid b64_json strings.");
-                 return { success: false, error: "Received image data in an unexpected format from Together AI." };
-             }
-
-             // --- Upload to Supabase Storage --- Get first VALID image
-             let storagePath = ''; // Variable to store the path
-             try {
-                // Find the first item that had a valid b64_json string for upload
-                // Use 'any' temporarily
-                const firstValidImage = response.data.find((imgData: any) => typeof imgData?.b64_json === 'string');
-
-                // Check if firstValidImage and its b64_json property are defined
-                if (!firstValidImage || typeof firstValidImage.b64_json !== 'string') {
-                    throw new Error("No valid image data found to upload.");
+            // Process URLs from the response
+            const imageUrls = response.data.map(item => item.url).filter(Boolean);
+            const base64Images: string[] = [];
+            let storagePath = '';
+            
+            // Download and process the first image
+            try {
+                // Fetch the first image
+                const firstImageUrl = imageUrls[0];
+                if (!firstImageUrl) {
+                    throw new Error("No valid image URL returned from API");
                 }
-                const firstImageBase64 = firstValidImage.b64_json;
-                const imageBuffer = Buffer.from(firstImageBase64, 'base64');
-                const bucketName = 'images'; // <-- Use your actual bucket name
+                
+                console.log("Fetching image from URL:", firstImageUrl);
+                
+                const imageResponse = await fetch(firstImageUrl);
+                if (!imageResponse.ok) {
+                    throw new Error(`Failed to fetch image from URL: ${imageResponse.statusText}`);
+                }
+                
+                // Get content type and image data
+                const contentType = imageResponse.headers.get('content-type') || 'image/png';
+                const imageBlob = await imageResponse.blob();
+                const imageBuffer = Buffer.from(await imageBlob.arrayBuffer());
+                
+                // Convert to Base64 for frontend display
+                const base64ImageData = imageBuffer.toString('base64');
+                const base64Image = `data:${contentType};base64,${base64ImageData}`;
+                base64Images.push(base64Image);
+                
+                // Get additional images if needed
+                for (let i = 1; i < imageUrls.length; i++) {
+                    const imgUrl = imageUrls[i];
+                    if (!imgUrl) continue;
+                    
+                    const imgResponse = await fetch(imgUrl);
+                    if (imgResponse.ok) {
+                        const imgContentType = imgResponse.headers.get('content-type') || 'image/png';
+                        const imgBlob = await imgResponse.blob();
+                        const imgBuffer = Buffer.from(await imgBlob.arrayBuffer());
+                        const imgBase64 = `data:${imgContentType};base64,${imgBuffer.toString('base64')}`;
+                        base64Images.push(imgBase64);
+                    }
+                }
+                
+                // Upload to Supabase Storage
+                const bucketName = 'images';
                 const filePath = `public/togetherai-${params.model.replace(/[^a-zA-Z0-9]/g, '_')}-${uuidv4()}.png`; // Unique path
 
-                console.log(`Attempting to upload image to Supabase Storage: ${bucketName}/${filePath}`);
+                console.log(`Uploading to Supabase Storage: ${bucketName}/${filePath}`);
 
                 const { data: uploadData, error: uploadError } = await supabase.storage
                     .from(bucketName)
                     .upload(filePath, imageBuffer, {
-                        contentType: 'image/png',
-                        upsert: true, // Overwrite if file exists (optional)
+                        contentType: contentType,
+                        upsert: true, 
                     });
 
                 if (uploadError) {
-                    throw uploadError; // Re-throw storage error
+                    throw uploadError;
                 }
 
                 if (!uploadData?.path) {
-                     throw new Error("Supabase storage upload succeeded but returned no path.");
+                    throw new Error("Supabase storage upload succeeded but returned no path.");
                 }
 
-                storagePath = uploadData.path; // Store the file path
+                storagePath = uploadData.path;
                 console.log("Image uploaded successfully to Supabase Storage:", storagePath);
 
-             } catch (storageError: any) {
-                 console.error("Supabase storage upload error:", storageError);
-                 // Decide how to handle storage errors - maybe return an error response?
-                 // For now, log it and proceed, but image_url in DB will be empty/wrong
-                 // Return an error might be better:
-                 return { success: false, error: `Failed to upload image to storage: ${storageError.message}` };
-             }
-            // --- End Upload to Supabase Storage ---
+                // Save metadata to Supabase
+                const imageData: ImageInsert = {
+                    prompt_text: params.prompt,
+                    negative_prompt: params.negativePrompt,
+                    image_url: storagePath,
+                    provider: "Together AI",
+                    model: params.model,
+                    width: params.width,
+                    height: params.height,
+                    seed: params.seed,
+                    steps: stepsToUse,
+                    guidance_scale: params.guidanceScale,
+                    status: 'completed',
+                    style: params.style,
+                };
 
+                console.log("Saving image metadata to Supabase DB");
+                const { data: dbData, error: dbError } = await supabase
+                    .from('images')
+                    .insert(imageData)
+                    .select('id')
+                    .single();
 
-            // --- Save metadata to Supabase DB ---
-            const imageData: ImageInsert = {
-                prompt_text: params.prompt,
-                negative_prompt: params.negativePrompt,
-                image_url: storagePath, // <-- NEW: Store the Supabase storage path
-                provider: "Together AI", // <-- Use Generic Provider Name
-                model: params.model, // Save specific model ID here
-                width: params.width,
-                height: params.height,
-                seed: params.seed,
-                steps: stepsToUse,
-                guidance_scale: params.guidanceScale,
-                status: 'completed',
-                style: params.style,
-            };
+                if (dbError) {
+                    console.error("Supabase DB insert error:", dbError);
+                } else {
+                    console.log("Saved image metadata to Supabase DB, ID:", dbData?.id);
+                }
 
-            console.log("Attempting to save image metadata to Supabase DB with storage path...");
-            const { data: dbData, error: dbError } = await supabase
-                .from('images')
-                .insert(imageData)
-                .select('id') // Optionally select the ID of the new row
-                .single(); // Expecting a single row inserted
-
-            if (dbError) {
-                console.error("Supabase DB insert error:", dbError);
-                // Log it, but the storage upload might have succeeded.
-                // Consider if a rollback/delete from storage is needed here.
-            } else {
-                console.log("Saved image metadata to Supabase DB, ID:", dbData?.id);
+                return { success: true, images: base64Images };
+            } catch (error: any) {
+                console.error("Error processing images:", error);
+                return { success: false, error: `Failed to process images: ${error.message}` };
             }
-            // --- End Save to Supabase DB ---
-
-             // Return the original base64 for the frontend
-            return { success: true, images: base64Images };
         } else {
-            // Handle cases where the response structure might be different than expected
-            console.error("Unexpected response format or empty data from Together AI library:", response);
-            return { success: false, error: "Received unexpected response format or no images from API." };
+            console.error("Invalid response from Together AI:", response);
+            return { success: false, error: "No valid images returned from API." };
         }
-
     } catch (error: any) {
-        console.error("Together AI Library call failed:", error);
-        const errorMessage = error?.message || (typeof error === 'string' ? error : 'An unknown error occurred with the Together AI library.');
+        console.error("Together AI call failed:", error);
+        const errorMessage = error?.message || 'An unknown error occurred with the Together AI API.';
         return { success: false, error: `Failed to generate image via Together AI: ${errorMessage}` };
     }
 }
@@ -184,22 +194,25 @@ async function callTogetherAIWithLibrary(params: ImageGenerationParameters & { m
 async function callOpenAI(params: ImageGenerationParameters): Promise<{ success: boolean; images?: string[]; error?: string }> {
     console.log(`Calling OpenAI API (gpt-image-1)`);
     try {
+        // Initialize the OpenAI client with API key from params
+        const openai = new OpenAI({
+            apiKey: params.apiKey,
+        });
+
         // Map frontend params to OpenAI API params
         const openAIParams: OpenAI.Images.ImageGenerateParams = {
             model: "gpt-image-1",
             prompt: params.prompt,
-            n: 1, // Only n=1 supported
+            n: params.numOutputs || 1, // Support multiple images (up to 10)
             size: `${params.width}x${params.height}` as OpenAI.Images.ImageGenerateParams['size'], // Ensure format is correct
-            quality: "standard", // TODO: Add quality selection (standard/hd) later
-            style: "vivid",      // TODO: Add style selection (vivid/natural) later
-            response_format: "b64_json",
+            quality: "medium", // Valid values: 'low', 'medium', 'high', 'auto'
         };
 
         // Validate size - DALL-E 3 only supports specific sizes
         const validSizes = ["1024x1024", "1792x1024", "1024x1792"];
         if (!validSizes.includes(openAIParams.size ?? "")) {
-            console.error(`Invalid size for DALL·E 3: ${openAIParams.size}`);
-            return { success: false, error: `Invalid dimensions for DALL·E 3. Use 1024x1024, 1792x1024, or 1024x1792.` };
+            console.error(`Invalid size for GPT-4o Vision: ${openAIParams.size}`);
+            return { success: false, error: `Invalid dimensions for GPT-4o Vision. Use 1024x1024, 1792x1024, or 1024x1792.` };
         }
 
         console.log("OpenAI API Params:", { ...openAIParams, prompt: "[PROMPT REDACTED]" });
@@ -208,18 +221,53 @@ async function callOpenAI(params: ImageGenerationParameters): Promise<{ success:
 
         console.log("OpenAI API Response received");
 
-        if (response.data && response.data.length > 0 && response.data[0].b64_json) {
-            // Keep original base64 for immediate frontend display
-            const base64Images = response.data.map((imgData: OpenAIImage) => `data:image/png;base64,${imgData.b64_json}`);
-
-            // --- Upload to Supabase Storage ---
+        if (response.data && response.data.length > 0) {
+            // For gpt-image-1, the response contains URLs instead of base64 data
+            const imageUrls = response.data.map((imgData: any) => imgData.url);
+            
+            // We need to download the images from the URLs to store them
+            const base64Images: string[] = [];
+            let imageBuffer: Buffer;
             let storagePath = ''; // Variable to store the path
+            
             try {
-                const firstImageBase64 = response.data[0].b64_json;
-                const imageBuffer = Buffer.from(firstImageBase64, 'base64');
+                // Download the first image
+                const firstImageUrl = imageUrls[0];
+                console.log("Fetching image data from OpenAI URL:", firstImageUrl);
+                
+                const imageResponse = await fetch(firstImageUrl);
+                if (!imageResponse.ok) {
+                    throw new Error(`Failed to fetch image from OpenAI URL: ${imageResponse.statusText}`);
+                }
+                
+                // Get content type for storage upload
+                const contentType = imageResponse.headers.get('content-type') || 'image/png';
+                const imageBlob = await imageResponse.blob();
+                imageBuffer = Buffer.from(await imageBlob.arrayBuffer());
+                
+                // Convert to Base64 for frontend return
+                const base64ImageData = imageBuffer.toString('base64');
+                const base64Image = `data:${contentType};base64,${base64ImageData}`;
+                
+                // Add to our array of base64 images
+                base64Images.push(base64Image);
+                
+                // If there are more images, fetch and convert them too
+                for (let i = 1; i < imageUrls.length; i++) {
+                    const imgUrl = imageUrls[i];
+                    const imgResponse = await fetch(imgUrl);
+                    if (imgResponse.ok) {
+                        const imgContentType = imgResponse.headers.get('content-type') || 'image/png';
+                        const imgBlob = await imgResponse.blob();
+                        const imgBuffer = Buffer.from(await imgBlob.arrayBuffer());
+                        const imgBase64 = `data:${imgContentType};base64,${imgBuffer.toString('base64')}`;
+                        base64Images.push(imgBase64);
+                    }
+                }
+                
+                // --- Upload to Supabase Storage ---
                 const bucketName = 'images'; // <-- Use your actual bucket name
-                // Using a simpler model name here as it's fixed for OpenAI
-                const filePath = `public/openai-dalle3-${uuidv4()}.png`; // Unique path
+                const filePath = `public/openai-gpt4o-vision-${uuidv4()}.png`; // Unique path
 
                 console.log(`Attempting to upload OpenAI image to Supabase Storage: ${bucketName}/${filePath}`);
 
@@ -234,20 +282,17 @@ async function callOpenAI(params: ImageGenerationParameters): Promise<{ success:
                     throw uploadError; // Re-throw storage error
                 }
 
-                 if (!uploadData?.path) {
-                     throw new Error("Supabase storage upload succeeded but returned no path.");
-                 }
+                if (!uploadData?.path) {
+                    throw new Error("Supabase storage upload succeeded but returned no path.");
+                }
 
                 storagePath = uploadData.path; // Store the file path
                 console.log("OpenAI image uploaded successfully to Supabase Storage:", storagePath);
 
             } catch (storageError: any) {
-                console.error("Supabase storage upload error (OpenAI):", storageError);
-                // Return an error
-                return { success: false, error: `Failed to upload OpenAI image to storage: ${storageError.message}` };
+                console.error("Error processing OpenAI images:", storageError);
+                return { success: false, error: `Failed to process OpenAI images: ${storageError.message}` };
             }
-            // --- End Upload to Supabase Storage ---
-
 
             // --- Save metadata to Supabase DB ---
             const imageData: ImageInsert = {
@@ -259,11 +304,11 @@ async function callOpenAI(params: ImageGenerationParameters): Promise<{ success:
                 height: params.height,
                 status: 'completed',
                 style: params.style,
-                 // Note: DALL-E 3 doesn't expose all parameters like seed, steps, guidance
-                 negative_prompt: null, // Not applicable or controlled for DALL-E 3 via basic API
-                 seed: null, // Not returned by DALL-E 3 API
-                 steps: null, // Not applicable for DALL-E 3
-                 guidance_scale: null, // Not applicable for DALL-E 3
+                // Note: GPT-4o Vision doesn't expose all parameters like seed, steps, guidance
+                negative_prompt: null, // Not applicable or controlled for GPT-4o Vision via basic API
+                seed: null, // Not returned by GPT-4o Vision API
+                steps: null, // Not applicable for GPT-4o Vision
+                guidance_scale: null, // Not applicable for GPT-4o Vision
             };
 
             console.log("Attempting to save OpenAI image metadata to Supabase DB with storage path...");
@@ -524,18 +569,37 @@ export async function POST(request: NextRequest) {
             return NextResponse.json({ error: 'Missing required generation parameters.' }, { status: 400 });
         }
 
+        // Get API keys from headers if provided by client
+        const openaiApiKey = request.headers.get('x-openai-api-key') || process.env.OPENAI_API_KEY;
+        const togetheraiApiKey = request.headers.get('x-togetherai-api-key') || process.env.TOGETHER_API_KEY;
+        const replicateApiKey = process.env.REPLICATE_API_TOKEN; // Keep using env for Replicate
+
         // --- API Key Checks ---
         // Check if Replicate API key is needed and missing
-        if (body.provider.includes('/') && !process.env.REPLICATE_API_TOKEN) { // Heuristic for Replicate models
+        if (body.provider.includes('/') && !replicateApiKey) { // Heuristic for Replicate models
              console.error("Replicate API key not configured.");
              return NextResponse.json({ error: "Replicate API key not configured on the server. Please set REPLICATE_API_TOKEN environment variable." }, { status: 500 });
         }
         // Check if OpenAI API key is needed and missing
-        if (body.provider === 'openai' && !process.env.OPENAI_API_KEY) {
+        if (body.provider === 'openai' && !openaiApiKey) {
              console.error("OpenAI API key not configured.");
-             return NextResponse.json({ error: "OpenAI API key not configured on the server. Please set OPENAI_API_KEY environment variable." }, { status: 500 });
+             return NextResponse.json({ error: "OpenAI API key not provided. Please add your OpenAI API key in Settings." }, { status: 400 });
         }
-        // Add check for Together AI if needed
+        // Check for TogetherAI API key if needed
+        if (body.provider === 'togetherai') {
+            // For the free Flux Schnell model, check environment first, then fall back to user-provided key
+            if (!process.env.TOGETHER_API_KEY && !togetheraiApiKey) {
+                console.error("TogetherAI API key not configured on server for free model and not provided by user.");
+                return NextResponse.json({ 
+                    error: "Please provide a TogetherAI API key in Settings. You can get a free API key at together.ai" 
+                }, { status: 400 });
+            }
+            // If either env or user key is available, we'll continue
+        } else if (body.provider === "black-forest-labs/FLUX.1.1-pro" && !togetheraiApiKey) {
+            // Only require user's API key for the paid/pro models
+            console.error("TogetherAI API key not provided for paid model.");
+            return NextResponse.json({ error: "TogetherAI API key not provided. Please add your TogetherAI API key in Settings." }, { status: 400 });
+        }
 
         // Construct parameters
         const params: ImageGenerationParameters = {
@@ -548,9 +612,20 @@ export async function POST(request: NextRequest) {
             seed: body.seed,
             steps: body.steps,
             guidanceScale: body.guidanceScale,
-            apiKey: '', // Handled server-side
+            apiKey: '', // Will be set based on provider
             provider: body.provider, // Add provider key/ID to params
         };
+
+        // Set appropriate API key based on provider
+        if (body.provider === 'openai') {
+            params.apiKey = openaiApiKey || '';
+        } else if (body.provider === 'togetherai') {
+            // For free model, try environment variable first, then fall back to user-provided key
+            params.apiKey = process.env.TOGETHER_API_KEY || togetheraiApiKey || '';
+        } else if (body.provider === "black-forest-labs/FLUX.1.1-pro") {
+            // For paid model, use user-provided key
+            params.apiKey = togetheraiApiKey || '';
+        }
 
         // --- Define style keywords ---
         const styleKeywords: { [key: string]: string } = {

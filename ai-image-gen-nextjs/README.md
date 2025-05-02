@@ -16,6 +16,13 @@ This project is a web application built with [Next.js](https://nextjs.org) that 
 *   Built with Next.js App Router, TypeScript, Tailwind CSS, and Shadcn/UI.
 *   Includes Vercel Analytics for visitor tracking and performance monitoring.
 
+## Future Features
+
+- Add quality selection for OpenAI API ('low', 'medium', 'high', 'auto')
+- Add ability to delete saved prompts
+- Add more style filters
+- Add image editing features
+
 ## Getting Started
 
 ### Prerequisites

@@ -9,6 +9,7 @@ import {
   Wand2, 
   FileText, 
   Image as ImageIcon, // Rename to avoid conflict with Next Image 
+  Settings, // Add Settings icon
 } from "lucide-react"; 
 import { Button } from "@/components/ui/button";
 
@@ -17,6 +18,7 @@ const navItems = [
   { name: "Generate", href: "/generate", icon: Wand2 }, 
   { name: "Prompts", href: "/prompts", icon: FileText },
   { name: "Images", href: "/images", icon: ImageIcon },
+  { name: "Settings", href: "/settings", icon: Settings }, // Add Settings item
 ];
 
 export function Shell({ children }: { children: React.ReactNode }) {

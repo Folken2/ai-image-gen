@@ -124,6 +124,18 @@ export default function Home() {
 
    // --- Update UI based on selected provider capabilities
    useEffect(() => {
+    // Check if the selected provider is available, if not switch to an available one
+    if (!availableProvidersDisplay[selectedProvider]?.available) {
+      // Find the first available provider
+      const availableProvider = Object.entries(availableProvidersDisplay)
+        .find(([_, provider]) => provider.available);
+      
+      if (availableProvider) {
+        setSelectedProvider(availableProvider[0]);
+        return; // Exit early since setSelectedProvider will trigger this effect again
+      }
+    }
+
     const newCaps = availableProvidersDisplay[selectedProvider]?.capabilities || defaultCapabilities;
     setCurrentCapabilities(newCaps);
 
@@ -161,7 +173,7 @@ export default function Home() {
     if (parseInt(imageCount) > newCaps.maxImageCount) {
         setImageCount(String(newCaps.maxImageCount));
     }
-    // Reset to 1 if max is 1 (like DALL-E)
+    // Reset to 1 if max is 1 (some models have limitations)
     if (imageCount !== "1" && newCaps.maxImageCount === 1) {
         setImageCount("1");
     }
@@ -189,51 +201,65 @@ export default function Home() {
 
   // --- Handlers ---
   const handleGenerate = async () => {
-    setError(null);
-    setGeneratedImages([]);
-    setIsLoading(true);
-
-    const [widthStr, heightStr] = dimensions.split('x');
-    const width = parseInt(widthStr, 10);
-    const height = parseInt(heightStr, 10);
-    const numOutputs = parseInt(imageCount, 10);
-
-    if (isNaN(width) || isNaN(height) || isNaN(numOutputs)) {
-        setError("Invalid dimensions or image count.");
-        setIsLoading(false);
-        return;
+    if (!prompt.trim()) {
+      setError("Please enter a prompt first.");
+      return;
     }
 
-    // Process seed: empty string means no seed, otherwise parse as number
-    const seedValue = typeof seed === 'string' && seed.trim() === '' ? undefined : parseInt(String(seed), 10);
-    if (typeof seed === 'string' && seed.trim() !== '' && isNaN(seedValue as number)) {
-        setError("Invalid Seed value. Must be a number or empty.");
-        setIsLoading(false);
-        return;
+    // Check if the selected provider is available
+    if (!availableProvidersDisplay[selectedProvider]?.available) {
+      setError("This model is not available yet. Please select a different provider.");
+      return;
     }
-
-    // Prepare data for the API route
-    const requestBody = {
-      provider: selectedProvider,
-      prompt,
-      negativePrompt: currentCapabilities.supportsNegativePrompt ? (negativePrompt.trim() || undefined) : undefined,
-      width,
-      height,
-      numOutputs,
-      style: selectedStyle === "none" ? undefined : selectedStyle,
-      seed: seedValue,
-      steps: currentCapabilities.supportedSteps ? steps[0] : undefined,
-      guidanceScale: currentCapabilities.supportsGuidanceScale ? guidanceScale[0] : undefined,
-    };
-
-    console.log("Sending request to /api/generate:", requestBody);
 
     try {
+      setIsLoading(true);
+      setError(null);
+
+      // Get API keys from sessionStorage
+      let headers: HeadersInit = {
+        'Content-Type': 'application/json'
+      };
+      
+      // Add API keys to headers if they exist
+      if (typeof window !== 'undefined') {
+        const openaiKey = sessionStorage.getItem('openai_api_key');
+        const togetheraiKey = sessionStorage.getItem('togetherai_api_key');
+        
+        if (selectedProvider === 'openai' && openaiKey) {
+          headers['x-openai-api-key'] = openaiKey;
+        }
+        
+        // Send TogetherAI API key for any TogetherAI model if available
+        if ((selectedProvider === 'togetherai' || selectedProvider === "black-forest-labs/FLUX.1.1-pro") && togetheraiKey) {
+          headers['x-togetherai-api-key'] = togetheraiKey;
+        }
+      }
+
+      // Parse dimensions
+      const [width, height] = dimensions.split('x').map(Number);
+
+      // Convert image count from string to number
+      const numImages = parseInt(imageCount, 10);
+
+      // Prepare the request body
+      const requestBody = {
+        prompt,
+        negativePrompt,
+        width,
+        height,
+        provider: selectedProvider,
+        style: selectedStyle,
+        numOutputs: numImages > 0 ? numImages : 1,
+        steps: steps[0],
+        guidanceScale: guidanceScale[0],
+        seed: seed || Math.floor(Math.random() * 1000000),
+      };
+
+      // Make the API call
       const response = await fetch('/api/generate', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers,
         body: JSON.stringify(requestBody),
       });
 
@@ -309,7 +335,18 @@ export default function Home() {
                   </SelectTrigger>
                   <SelectContent>
                     {Object.entries(availableProvidersDisplay).map(([key, provider]) => (
-                      <SelectItem key={key} value={key}>{provider.name}</SelectItem>
+                      <SelectItem 
+                        key={key} 
+                        value={key} 
+                        disabled={!provider.available}
+                      >
+                        {provider.name}
+                        {!provider.available && (
+                          <span className="ml-2 text-xs text-muted-foreground bg-secondary px-1.5 py-0.5 rounded">
+                            Available Soon
+                          </span>
+                        )}
+                      </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
